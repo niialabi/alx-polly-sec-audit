@@ -52,7 +52,7 @@ export async function getUserPolls() {
 
   const { data, error } = await supabase
     .from("polls")
-    .select("*")
+    .select("id, question, options, user_id")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
@@ -65,7 +65,7 @@ export async function getPollById(id: string) {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("polls")
-    .select("*")
+    .select("id, question, options, user_id")
     .eq("id", id)
     .single();
 
@@ -80,13 +80,29 @@ export async function submitVote(pollId: string, optionIndex: number) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Optionally require login to vote
-  // if (!user) return { error: 'You must be logged in to vote.' };
+  if (!user) return { error: "You must be logged in to vote." };
+
+  // Check if the user has already voted on this poll
+  const { data: existingVote, error: voteCheckError } = await supabase
+    .from("votes")
+    .select("id")
+    .eq("poll_id", pollId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (voteCheckError && voteCheckError.code !== "PGRST116") {
+    // PGRST116 means no rows found, which is what we want.
+    return { error: "Error checking for existing vote." };
+  }
+
+  if (existingVote) {
+    return { error: "You have already voted on this poll." };
+  }
 
   const { error } = await supabase.from("votes").insert([
     {
       poll_id: pollId,
-      user_id: user?.id ?? null,
+      user_id: user.id,
       option_index: optionIndex,
     },
   ]);
@@ -98,7 +114,20 @@ export async function submitVote(pollId: string, optionIndex: number) {
 // DELETE POLL
 export async function deletePoll(id: string) {
   const supabase = await createClient();
-  const { error } = await supabase.from("polls").delete().eq("id", id);
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: "You must be logged in to delete a poll." };
+  }
+
+  const { error } = await supabase
+    .from("polls")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", user.id);
+
   if (error) return { error: error.message };
   revalidatePath("/polls");
   return { error: null };

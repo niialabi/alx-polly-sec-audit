@@ -1,6 +1,5 @@
-"use client";
-
-import { useState, useEffect } from "react";
+import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -10,7 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { deletePoll } from "@/app/lib/actions/poll-actions";
-import { createClient } from "@/lib/supabase/client";
+import { revalidatePath } from "next/cache";
 
 interface Poll {
   id: string;
@@ -20,42 +19,52 @@ interface Poll {
   options: string[];
 }
 
-export default function AdminPage() {
-  const [polls, setPolls] = useState<Poll[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
+// Server action for deletion to be used in the form
+async function handleDelete(formData: FormData) {
+  "use server";
+  const pollId = formData.get("pollId") as string;
+  if (pollId) {
+    await deletePoll(pollId);
+    revalidatePath("/admin");
+  }
+}
 
-  useEffect(() => {
-    fetchAllPolls();
-  }, []);
+export default async function AdminPage() {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  const fetchAllPolls = async () => {
-    const supabase = createClient();
+  if (!user) {
+    redirect("/login");
+  }
 
-    const { data, error } = await supabase
-      .from("polls")
-      .select("*")
-      .order("created_at", { ascending: false });
+  // Secure: Check for admin role on the server
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
 
-    if (!error && data) {
-      setPolls(data);
-    }
-    setLoading(false);
-  };
+  if (profile?.role !== "admin") {
+    return (
+      <div className="p-6 text-center">
+        <h1 className="text-2xl font-bold">Access Denied</h1>
+        <p className="text-red-500 mt-2">
+          You do not have permission to view this page.
+        </p>
+      </div>
+    );
+  }
 
-  const handleDelete = async (pollId: string) => {
-    setDeleteLoading(pollId);
-    const result = await deletePoll(pollId);
+  // Fetch all polls on the server
+  const { data: polls, error } = await supabase
+    .from("polls")
+    .select("*")
+    .order("created_at", { ascending: false });
 
-    if (!result.error) {
-      setPolls(polls.filter((poll) => poll.id !== pollId));
-    }
-
-    setDeleteLoading(null);
-  };
-
-  if (loading) {
-    return <div className="p-6">Loading all polls...</div>;
+  if (error) {
+    return <div className="p-6">Error loading polls.</div>;
   }
 
   return (
@@ -68,7 +77,7 @@ export default function AdminPage() {
       </div>
 
       <div className="grid gap-4">
-        {polls.map((poll) => (
+        {polls.map((poll: Poll) => (
           <Card key={poll.id} className="border-l-4 border-l-blue-500">
             <CardHeader>
               <div className="flex justify-between items-start">
@@ -95,14 +104,12 @@ export default function AdminPage() {
                     </div>
                   </CardDescription>
                 </div>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => handleDelete(poll.id)}
-                  disabled={deleteLoading === poll.id}
-                >
-                  {deleteLoading === poll.id ? "Deleting..." : "Delete"}
-                </Button>
+                <form action={handleDelete}>
+                  <input type="hidden" name="pollId" value={poll.id} />
+                  <Button variant="destructive" size="sm" type="submit">
+                    Delete
+                  </Button>
+                </form>
               </div>
             </CardHeader>
             <CardContent>

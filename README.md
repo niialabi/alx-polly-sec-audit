@@ -59,6 +59,30 @@ A good security audit involves both static code analysis and dynamic testing. He
 
 ---
 
+## Security Audit Findings & Remediation
+
+This section documents the security vulnerabilities that were identified and the corrective actions taken to secure the application.
+
+### 1. 🚨 Critical - Broken Access Control in Poll Deletion
+
+-   **Vulnerability**: Any authenticated user could delete any poll in the system, even those they did not create. The `deletePoll` server action only required a valid `poll_id` and did not verify ownership.
+-   **Risk**: This allowed for trivial data destruction. A malicious user could wipe out all user-generated content, leading to a total loss of data.
+-   **Remediation**: The `deletePoll` function in `app/lib/actions/poll-actions.ts` was modified to enforce ownership. It now retrieves the current user's ID and adds a `.eq("user_id", user.id)` clause to the Supabase query. This ensures the `DELETE` operation only succeeds if the poll's `user_id` matches the ID of the user making the request.
+
+### 2. 🚨 Critical - Unprotected Admin Panel
+
+-   **Vulnerability**: The admin page at `/admin` was a client-side component that fetched and displayed all polls from all users. Access to this page was not restricted on the server.
+-   **Risk**: Any authenticated user could navigate to the `/admin` URL and view, manage, and delete every poll in the database. This represents a complete failure of access control for a privileged administrative function.
+-   **Remediation**: The admin page was converted from a client component to a server component. Now, before the page is rendered, a server-side check verifies the user's session and queries a `profiles` table to confirm they have an `admin` role. If the user is not an admin, an "Access Denied" message is displayed instead of the sensitive data.
+
+### 3. 🟡 Medium - Unlimited Voting
+
+-   **Vulnerability**: The `submitVote` function did not prevent a user from voting multiple times on the same poll. A user could repeatedly submit votes, illegitimately skewing the poll results.
+-   **Risk**: This flaw undermines the integrity of the polling system. Poll outcomes could be easily manipulated, making the application's core functionality untrustworthy.
+-   **Remediation**: The `submitVote` function in `app/lib/actions/poll-actions.ts` was updated to include a check for an existing vote. Before inserting a new vote, it now queries the `votes` table to see if a record already exists for the current `user_id` and `poll_id`. If a vote is found, a "You have already voted" error is returned, preventing duplicate votes.
+
+---
+
 ## Getting Started
 
 To begin your security audit, you'll need to get the application running on your local machine.
